@@ -1,0 +1,17 @@
+# 标记所有文件自动检测文本类型
+* text=auto
+
+# 强制指定特定的源代码文件始终使用 LF
+*.go text eol=lf
+*.js text eol=lf
+*.sh text eol=lf
+*.json text eol=lf
+*.yaml text eol=lf
+*.md text eol=lf
+*.mod text eol=lf
+*.sum text eol=lf
+*.lock text eol=lf
+*.toml text eol=lf
+*.env text eol=lf
+*ignore text eol=lf
+LICENSE* text eol=lf
