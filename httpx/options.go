@@ -4,91 +4,50 @@ import (
 	"cmp"
 	"context"
 	"encoding/base64"
-	"fmt"
 	"io"
 	"mime"
 	"mime/multipart"
-	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
-	"time"
 )
 
+func (r *Request) With(options ...Option) *Request {
+	for _, option := range options {
+		option(r)
+	}
+	return r
+}
+
+// Option is a request option.
 type Option func(*Request)
 
+// Options 设置请求选项。
 func Options(options ...Option) Option { return func(r *Request) { r.With(options...) } }
 
+// Method 设置请求方法。
 func Method(method string) Option { return func(r *Request) { r.Method = method } }
 
+// RaiseStatus 设置请求是否 raises 状态码。
 func RaiseStatus() Option { return func(r *Request) { r.RaiseStatus = true } }
 
-func TryTimes(tryTimes int) Option { return func(r *Request) { r.TryTimes = tryTimes } }
-
-func Insecure(insecure bool) Option { return func(r *Request) { r.InsecureSkipVerify = insecure } }
-
-func Timeout(timeout time.Duration) Option { return func(r *Request) { r.Timeout = timeout } }
-
-func Proxy(proxy string) Option {
-	return func(r *Request) {
-		if i, _ := strconv.Atoi(proxy); i > 0 && i <= 65535 {
-			r.Proxy = "http://127.0.0.1:" + proxy
-			return
-		}
-
-		u, err := url.Parse(proxy)
-		if err != nil {
-			r.Proxy = proxy
-			return
-		}
-
-		if u.Scheme == "" {
-			u.Scheme = "http"
-		}
-
-		if host, port := u.Hostname(), u.Port(); host == "" || port == "" {
-			if port == "" {
-				switch u.Scheme {
-				case "https":
-					port = "443"
-				case "http":
-					port = "80"
-				case "socks", "socks5":
-					port = "1080"
-				default:
-					return
-				}
-			}
-			if host == "" {
-				host = "127.0.0.1"
-			}
-			u.Host = fmt.Sprintf("%s:%s", host, port)
-		}
-
-		r.Proxy = u.String()
-	}
-}
-
-func ProxyDisabled() Option {
-	return func(r *Request) { r.ProxyDisabled = true }
-}
-
-func BeforeTry(beforeTry func(err error, tryTime int, sleep time.Duration)) Option {
-	return func(r *Request) { r.BeforeTry = beforeTry }
-}
-
-func Dump() Option {
-	return func(r *Request) { r.Dump = true }
-}
-
+// HeaderSet 设置请求头。
 func HeaderSet(key, value string) Option {
 	return func(r *Request) {
 		r.Headers = append(r.Headers, [2]string{key, value})
 	}
 }
 
+// HeaderSets 设置请求头，支持多行
+//
+// 例如：
+//
+//	```
+//	User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/89.0.4389.90 Safari/537.36
+//	Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9
+//	Accept-Language: zh-CN,zh;q=0.9
+//	```
 func HeaderSets(headers string) Option {
 	return func(r *Request) {
 		for line := range strings.Lines(headers) {
@@ -100,104 +59,120 @@ func HeaderSets(headers string) Option {
 	}
 }
 
+// UserAgent 设置请求头。
 func UserAgent(userAgent string) Option {
 	return HeaderSet("User-Agent", userAgent)
 }
 
+// Referer 设置请求头。
 func Referer(referer string) Option {
 	return HeaderSet("Referer", referer)
 }
 
+// Cookies 设置请求头。
 func Cookies(cookies string) Option {
 	return HeaderSet("Cookie", cookies)
 }
 
-func CookieJar(jar http.CookieJar) Option {
-	return func(r *Request) { r.Jar = jar }
-}
-
-func Body(body string) Option {
+// Query 设置查询参数。
+func Query(params url.Values) Option {
 	return func(r *Request) {
-		r.Body = func(ctx context.Context) (io.ReadCloser, string, error) {
-			var contentType string
-			bType, content, _ := strings.Cut(body, ":")
-			switch bType {
-			case "file":
-				ext := filepath.Ext(content)
-				contentType = cmp.Or(mime.TypeByExtension(ext), "application/octet-stream")
-				f, err := os.Open(content)
-				return f, contentType, err
-			case "base64":
-				b := base64.NewDecoder(base64.StdEncoding, strings.NewReader(content))
-				return io.NopCloser(b), "application/octet-stream", nil
-			case "json":
-				return io.NopCloser(strings.NewReader(content)), "application/json", nil
-			case "form":
-				return io.NopCloser(strings.NewReader(content)), "application/x-www-form-urlencoded", nil
-			case "xml":
-				return io.NopCloser(strings.NewReader(content)), "application/xml", nil
-			case "html":
-				return io.NopCloser(strings.NewReader(content)), "text/html", nil
-			default:
-				return io.NopCloser(strings.NewReader(body)), contentType, nil
+		u, _ := url.Parse(r.URL)
+		q := u.Query()
+		for k, vs := range params {
+			for _, v := range vs {
+				q.Add(k, v)
 			}
 		}
+		u.RawQuery = q.Encode()
+		r.URL = u.String()
+	}
+}
 
-		if r.Method != http.MethodPost && r.Method != http.MethodPut && r.Method != http.MethodPatch {
-			r.Method = http.MethodPost
+// Body 设置请求体。
+func Body(body string) func(ctx context.Context) (io.ReadCloser, string, error) {
+	return func(ctx context.Context) (io.ReadCloser, string, error) {
+		var contentType string
+		bType, content, _ := strings.Cut(body, ":")
+		switch bType {
+		case "file":
+			ext := filepath.Ext(content)
+			contentType = cmp.Or(mime.TypeByExtension(ext), "application/octet-stream")
+			f, err := os.Open(filepath.Clean(content))
+			return f, contentType, err
+		case "base64":
+			b := base64.NewDecoder(base64.StdEncoding, strings.NewReader(content))
+			return io.NopCloser(b), "application/octet-stream", nil
+		case "json":
+			return io.NopCloser(strings.NewReader(content)), "application/json", nil
+		case "form":
+			return io.NopCloser(strings.NewReader(content)), "application/x-www-form-urlencoded", nil
+		case "xml":
+			return io.NopCloser(strings.NewReader(content)), "application/xml", nil
+		case "html":
+			return io.NopCloser(strings.NewReader(content)), "text/html", nil
+		default:
+			return io.NopCloser(strings.NewReader(body)), contentType, nil
 		}
 	}
 }
 
-func Form(form url.Values) Option {
+func BodyFile(path string) Option {
 	return func(r *Request) {
-		r.Body = func(ctx context.Context) (body io.ReadCloser, contentType string, err error) {
-			isMultiPart := false
-			for k, v := range form {
-				if len(v) > 1 || strings.Contains(k, "@") {
-					isMultiPart = true
-					break
-				}
+		r.Body = func(ctx context.Context) (io.ReadCloser, string, error) {
+			ext := filepath.Ext(path)
+			contentType := cmp.Or(mime.TypeByExtension(ext), "application/octet-stream")
+			f, err := os.Open(filepath.Clean(path)) // 防止路径遍历
+			return f, contentType, err
+		}
+	}
+}
+
+// Form 设置请求体。
+func Form(form url.Values) func(ctx context.Context) (io.ReadCloser, string, error) {
+	return func(ctx context.Context) (io.ReadCloser, string, error) {
+		isMultiPart := false
+		for k, v := range form {
+			if len(v) > 1 || strings.Contains(k, "@") {
+				isMultiPart = true
+				break
 			}
+		}
 
-			if !isMultiPart {
-				body = io.NopCloser(strings.NewReader(form.Encode()))
-				contentType = "application/x-www-form-urlencoded"
-				return
-			}
+		if !isMultiPart {
+			return io.NopCloser(strings.NewReader(form.Encode())), "application/x-www-form-urlencoded", nil
+		}
 
-			pr, pw := io.Pipe()
-			writer := multipart.NewWriter(pw)
+		pr, pw := io.Pipe()
+		writer := multipart.NewWriter(pw)
 
-			go func() {
-				for k, vs := range form {
-					for _, v := range vs {
-						if strings.HasPrefix(v, "@") {
-							err = writeFileField(ctx, writer, k, v[1:])
-						} else {
-							err = writer.WriteField(k, v)
-						}
-						if err == nil {
-							err = ctx.Err()
-						}
-						if err != nil {
-							pw.CloseWithError(err)
-							return
-						}
+		go func() {
+			for k, vs := range form {
+				for _, v := range vs {
+					if err := ctx.Err(); err != nil {
+						pw.CloseWithError(ctx.Err())
+						return
+					}
+
+					var err error
+					if strings.HasPrefix(v, "@") {
+						err = writeFileField(ctx, writer, k, v[1:])
+					} else {
+						err = writer.WriteField(k, v)
+					}
+					if err == nil {
+						err = ctx.Err()
+					}
+					if err != nil {
+						pw.CloseWithError(err)
+						return
 					}
 				}
-				if err == nil {
-					err = ctx.Err()
-				}
-				pw.CloseWithError(writer.Close())
-			}()
+			}
+			pw.CloseWithError(writer.Close())
+		}()
 
-			return pr, writer.FormDataContentType(), nil
-		}
-
-		if r.Method != http.MethodPost && r.Method != http.MethodPut && r.Method != http.MethodPatch {
-			r.Method = http.MethodPost
-		}
+		return pr, writer.FormDataContentType(), nil
 	}
 }
 
@@ -213,6 +188,8 @@ func writeFileField(ctx context.Context, writer *multipart.Writer, fieldName, fi
 		return
 	}
 
-	err = copyBuffer(ctx, fw, f, make([]byte, 512*1024))
+	buf := b64k.Get()
+	defer b64k.Put(buf)
+	_, err = copyBuffer(ctx, fw, f, buf)
 	return
 }

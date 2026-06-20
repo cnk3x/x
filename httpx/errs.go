@@ -5,12 +5,15 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 )
 
 type StatusError struct {
-	Status int
-	Raw    []byte
+	Status     int
+	Raw        []byte
+	RetryAfter time.Duration // 429 响应中的 Retry-After 头
 }
 
 func (se *StatusError) Error() string {
@@ -45,17 +48,47 @@ func shouldRetry(err error) bool {
 		return false
 	}
 
-	if se, ok := errors.AsType[*StatusError](err); ok {
-		return se.Status == http.StatusRequestTimeout || se.Status == http.StatusTooManyRequests || se.Status >= 500
-	}
-
-	if _, ok := errors.AsType[net.Error](err); ok {
+	var ne net.Error
+	if errors.As(err, &ne) && ne.Timeout() {
 		return true
 	}
+
+	var se *StatusError
+	if errors.As(err, &se) {
+		return se.Status == http.StatusRequestTimeout ||
+			se.Status == http.StatusTooManyRequests ||
+			se.Status == 425 || // Too Early
+			se.Status >= 500
+	}
+
 	msg := err.Error()
 	return strings.Contains(msg, "timeout") ||
 		strings.Contains(msg, "temporary") ||
 		strings.Contains(msg, "connection reset") ||
 		strings.Contains(msg, "broken pipe") ||
 		strings.Contains(msg, "EOF")
+}
+
+// parseRetryAfter 解析 429 响应中的 Retry-After 头
+// 返回应该等待的时长，如果无法解析则返回 0
+func parseRetryAfter(resp *http.Response) time.Duration {
+	retryAfter := resp.Header.Get("Retry-After")
+	if retryAfter == "" {
+		return 0
+	}
+
+	// 尝试解析为秒数
+	if seconds, err := strconv.Atoi(retryAfter); err == nil && seconds > 0 {
+		return time.Duration(seconds) * time.Second
+	}
+
+	// 尝试解析为 HTTP 日期格式
+	if t, err := http.ParseTime(retryAfter); err == nil {
+		delay := time.Until(t)
+		if delay > 0 {
+			return delay
+		}
+	}
+
+	return 0
 }
