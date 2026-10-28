@@ -12,9 +12,13 @@ import (
 var (
 	ErrWaitTimeout = errors.New("wait timeout")
 	ErrStopped     = errors.New("stop")
+
+	WithContext = errgroup.WithContext
 )
 
-func GroupDo(ctx context.Context, stopWait time.Duration, useEg func(eg *errgroup.Group, etx context.Context)) error {
+type Group = errgroup.Group
+
+func GroupDo(ctx context.Context, stopWait time.Duration, useEg func(eg *Group, etx context.Context)) error {
 	eg, etx := errgroup.WithContext(ctx)
 	errc := make(chan error, 1)
 	go func() {
