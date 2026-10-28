@@ -3,6 +3,7 @@ package jx
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 )
@@ -55,4 +56,26 @@ func MarshalTo(w io.Writer, v any) error {
 	}
 	_, err = w.Write(data)
 	return err
+}
+
+func Text(obj any, includeErr ...bool) string {
+	var text string
+	if data, err := json.MarshalIndent(obj, "", "  "); err != nil {
+		if len(includeErr) > 0 && includeErr[0] {
+			text = fmt.Sprintf("ERROR: %v", err)
+		}
+	} else {
+		text = string(data)
+	}
+	return text
+}
+
+func Indent(r Raw) Raw {
+	r.Indent()
+	return r
+}
+
+func Compact(r Raw) Raw {
+	r.Compact()
+	return r
 }
