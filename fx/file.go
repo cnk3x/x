@@ -1,17 +1,21 @@
 package fx
 
 import (
+	"cmp"
 	"io"
 	"io/fs"
 	"os"
-
-	"github.com/cnk3x/x/gx"
+	"path/filepath"
 )
 
 type FileProcess func(*os.File) error
 
 // CreateTemp like [os.CreateTemp], auto close after write, return temp file path
 func CreateTemp(dir, pattern string, write FileProcess) (string, error) {
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return "", err
+	}
+
 	tempFile, err := os.CreateTemp(dir, pattern)
 	if err != nil {
 		return "", err
@@ -28,13 +32,18 @@ func CreateInTemp(pattern string, write FileProcess) (string, error) {
 	return CreateTemp(os.TempDir(), pattern, write)
 }
 
-// Create like [os.OpenFile], auto close after useFile
+// Create like [os.OpenFile], but auto create parent dir (create mode) and auto close after useFile
 func OpenFile(name string, flag int, perm fs.FileMode, useFile FileProcess) error {
+	if flag&os.O_CREATE != 0 {
+		if err := os.MkdirAll(filepath.Dir(name), 0755); err != nil {
+			return err
+		}
+	}
 	f, err := os.OpenFile(name, flag, perm)
 	if err != nil {
 		return err
 	}
-	return gx.Or(useFile(f), f.Close())
+	return cmp.Or(useFile(f), f.Close())
 }
 
 // Create like [os.Open], auto close after readFile
